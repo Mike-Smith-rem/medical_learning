@@ -1,0 +1,9 @@
+torch
+torchvision
+matplotlib
+easydict
+opencv-python
+scikit-learn
+pandas
+prettytable
+yapf

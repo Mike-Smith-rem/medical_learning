@@ -1,0 +1,5 @@
+/logs
+/dataset/segment
+/dataset/segment_no_normal
+/dataset/classifer
+/dataset/cifar-10-batches-py
