@@ -1,0 +1,6 @@
+easydict
+opencv-python
+scikit-learn
+pandas
+prettytable
+yapf
