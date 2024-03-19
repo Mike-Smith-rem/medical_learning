@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from utils.loss import FocalLoss, SoftDiceLoss
+from .utils.loss import FocalLoss, SoftDiceLoss
 
 
 def load_criterion(args: dict, other: dict) -> nn.Module:
@@ -14,6 +14,8 @@ def load_criterion(args: dict, other: dict) -> nn.Module:
         criterion = SoftDiceLoss()
         if other is not None and other['alpha'] is not None and other['num_classes'] is not None:
             criterion = SoftDiceLoss(alpha=other['alpha'], num_classes=other['num_classes'])
+    elif args['criterion'] == 'BCELoss':
+        criterion = nn.BCEWithLogitsLoss()
     else:
         raise NotImplementedError("the loss {} not implemented".format(args['criterion']))
     return criterion

@@ -35,28 +35,19 @@ class FocalLoss(nn.Module):
         :return: loss:
         """
         B, C = preds.shape[0], preds.shape[1]
-        self.alpha = self.alpha.to(preds.device)                            # alpha: [C]
+        self.alpha = self.alpha.to(preds.device)  # alpha: [C]
 
         # 展开
         labels = labels.view(B, -1).long()  # labels:[B, H*W]
-        preds = preds.view(B, C, -1)                                  # preds: [B, C, H*W]
+        preds = preds.view(B, C, -1)        # preds: [B, C, H*W]
         label_reshaped = labels.detach().view(B, 1, -1)
-        print(preds)
-        print(label_reshaped)
-        preds = torch.gather(preds, dim=1, index=label_reshaped)              # preds: [B, H*W]
-        print(preds)
+        preds = torch.gather(preds, dim=1, index=label_reshaped)  # preds: [B, H*W]
         eps = 1e-7  # 防止数值超出定义域
-        alpha = self.alpha[labels]
+        alpha = self.alpha[labels]          # alpha: [B, H*W]
         # 开始计算
-        loss_y1 = (-1 * alpha *
-                   torch.pow((1 - preds), self.gamma) *
-                   torch.log(preds + eps) *
-                   labels)
-        loss_y0 = (-1 * (1 - alpha) *
-                   torch.pow(preds, self.gamma) *
-                   torch.log(1 - preds + eps) *
-                   (1 - labels))
-        loss = loss_y0 + loss_y1
+        loss = (-1 * alpha *
+                torch.pow((1 - preds), self.gamma) *
+                torch.log(preds + eps))
 
         if self.size_average:
             return torch.mean(loss)
@@ -95,9 +86,9 @@ class SoftDiceLoss(nn.Module):
         loss = torch.zeros(self.num_classes, device=preds.device)
         weight = self.alpha.to(preds.device)
         for i in range(C):
-            m1 = probs[:, i]    # m1: [B, H*W]
+            m1 = probs[:, i]  # m1: [B, H*W]
             labels = (labels == (i + 1)).long()
-            m2 = labels.view(B, -1)      # m2: [B, H*W]
+            m2 = labels.view(B, -1)  # m2: [B, H*W]
             intersection = (m1 * m2)
             cls_score = 2. * (intersection.sum() + smooth) / (m1.sum() + m2.sum() + smooth)
             cls_score = 1 - cls_score.sum() / B
@@ -133,7 +124,7 @@ if __name__ == '__main__':
     # print(F.sigmoid(a))
     a = torch.tensor([
         [
-            [[0.1, 0.6], [0.2, 0.4]], # h*w, channel 0, b0
+            [[0.1, 0.6], [0.2, 0.4]],  # h*w, channel 0, b0
             [[0.7, 0.1], [0.6, 0.9]]  # h*w, channel 1, b0
         ],
         [
@@ -142,7 +133,7 @@ if __name__ == '__main__':
         ]])
     b = torch.tensor(
         [
-            [[0, 1], [0, 1]], # h*w, b0
+            [[0, 1], [0, 1]],  # h*w, b0
             [[0, 1], [1, 1]]  # h*w, b1
         ])
     soft_dice_loss = SoftDiceLoss()

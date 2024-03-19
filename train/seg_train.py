@@ -27,8 +27,8 @@ def seg_train(args: dict, other: dict, model: nn.Module,
             optimizer.zero_grad()
 
             pred = model(img)
-            loss = criterion(pred, label)
 
+            loss = criterion(pred, label.squeeze(1).long())
             loss.backward()
             optimizer.step()
 
@@ -49,7 +49,7 @@ def seg_train(args: dict, other: dict, model: nn.Module,
         logger.save_file(test_dict, epoch, prefix="Test")
 
         # save the best model
-        test_dice = test_dict['test_dice'].item()
+        test_dice = test_dict['test_dice']
         if test_dice > best_dice:
             best_dice = test_dice
             logger.save_model(model, '_test_dice_' + str(test_dice))
@@ -65,10 +65,10 @@ def seg_test(val_loader, model, criterion, device) -> dict:
         for img, label in val_loader:
             img, label = img.to(device), label.to(device)
             pred = model(img)
-            loss = criterion(pred, label)
+            loss = criterion(pred, label.squeeze(1).long())
             dice_val = binary_dice_score(label_gt=label, label_pred=pred)
-            test_dict['test_loss'] += loss
-            test_dict['test_dice'] += dice_val['dice']
+            test_dict['test_loss'] += loss.item()
+            test_dict['test_dice'] += dice_val['dice'].item()
 
     test_dict = {
         'test_loss': test_dict['test_loss'] / len(val_loader),

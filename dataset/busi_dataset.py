@@ -4,8 +4,12 @@ Created 11 17:27:43
 
 import os
 
-import cv2
+# import cv2
+# use pli instead
 import matplotlib.pyplot as plt
+import torch
+from PIL import Image
+import numpy as np
 from torch.utils.data import Dataset, DataLoader, ConcatDataset
 from torchvision import transforms
 
@@ -43,10 +47,13 @@ class BUSI_classifier_dataSet(Dataset):
     def __getitem__(self, item):
         img_name = self.img_list[item]
         img_path = os.path.join(self.img_dir, img_name)
-        img = cv2.imread(img_path)
+        # img = cv2.imread(img_path)
         # img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        img = Image.open(img_path)
+        img = np.array(img)
         label = self.label_list[item]
         if self.transform:
+            print(img.shape)
             img = self.transform(img)
         if self.target_transform:
             label = self.target_transform(label)
@@ -73,13 +80,14 @@ class BUSI_segmentation_dataset(Dataset):
         mask_name = self.mask_list[item]
         img_path = os.path.join(self.img_path, img_name)
         mask_path = os.path.join(self.mask_path, mask_name)
-        img = cv2.imread(img_path)
+        # img = cv2.imread(img_path)
         # img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         # cv2.imwrite("test.png", img)
         # import sys
         # sys.exit(1)
-
-        mask = cv2.imread(mask_path)
+        img = np.array(Image.open(img_path))
+        mask = np.array(Image.open(img_path))
+        # mask = cv2.imread(mask_path)
 
         if self.transform:
             img = self.transform(img)
@@ -101,9 +109,8 @@ def segment_busi_dataLoader(load_normal_data=True, bs=32, info=None):
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
     target_transform = transforms.Compose([
-        transforms.ToPILImage(),
-        transforms.Grayscale(),
         transforms.ToTensor(),
+        transforms.Grayscale(),
         transforms.Resize((256, 256))
     ])
     import sys
@@ -112,28 +119,29 @@ def segment_busi_dataLoader(load_normal_data=True, bs=32, info=None):
     # 将父目录添加到Python路径中
     sys.path.append(current_dir)
     if load_normal_data:
-        train_path = os.path.join(current_dir, "segment/train")
-        test_path = os.path.join(current_dir, "segment/test")
+        train_path = os.path.join(current_dir, "classifer/train100/all")
+        test_path = os.path.join(current_dir, "classifer/test100/all")
     else:
         train_path = os.path.join(current_dir, "segment_no_normal/train")
         test_path = os.path.join(current_dir, "segment_no_normal/test")
     train_dataset = BUSI_segmentation_dataset(train_path, img_transform, target_transform)
     test_dataset = BUSI_segmentation_dataset(test_path, img_transform, target_transform)
 
-    train_dataloader = DataLoader(dataset=train_dataset, batch_size=bs, shuffle=True, num_workers=4)
-    test_dataloader = DataLoader(dataset=test_dataset, batch_size=bs, shuffle=False, num_workers=4)
+    train_dataloader = DataLoader(dataset=train_dataset, batch_size=bs, shuffle=True)
+    test_dataloader = DataLoader(dataset=test_dataset, batch_size=bs, shuffle=False)
     return train_dataloader, test_dataloader
 
 
-def classifer_busi_dataloader(load_normal_data=True, bs=32, info=None):
+def classifer_busi_dataloader(load_normal_data=True, bs=32, info=None, debug=True):
     import sys
     current_dir = os.path.dirname(os.path.abspath(__file__))
 
     # 将父目录添加到Python路径中
     sys.path.append(current_dir)
-    path0 = os.path.join(current_dir, "classifer/benign/img")
-    path1 = os.path.join(current_dir, "classifer/malignant/img")
-    path2 = os.path.join(current_dir, "classifer/normal/img")
+    path0 = os.path.join(current_dir, "classifer/train100/benign")
+    path1 = os.path.join(current_dir, "classifer/train100/malignant")
+    path2 = os.path.join(current_dir, "classifer/train100/normal")
+
     img_transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Resize((256, 256)),
@@ -143,20 +151,22 @@ def classifer_busi_dataloader(load_normal_data=True, bs=32, info=None):
     dataset1 = BUSI_classifier_dataSet(path1, 1, img_transform)
     dataset2 = BUSI_classifier_dataSet(path2, 2, img_transform)
 
-    from sklearn.model_selection import train_test_split
-    train_dataset0, test_dataset0 = train_test_split(dataset0, test_size=0.2, random_state=42)
-    train_dataset1, test_dataset1 = train_test_split(dataset1, test_size=0.2, random_state=42)
-    train_dataset2, test_dataset2 = train_test_split(dataset2, test_size=0.2, random_state=42)
+    path0_test = os.path.join(current_dir, "classifer/test100/benign")
+    dataset0_test = BUSI_classifier_dataSet(path0_test, 0, img_transform)
+    path1_test = os.path.join(current_dir, "classifer/test100/malignant")
+    dataset1_test = BUSI_classifier_dataSet(path1_test, 1, img_transform)
+    path2_test = os.path.join(current_dir, "classifer/test100/normal")
+    dataset2_test = BUSI_classifier_dataSet(path2_test, 2, img_transform)
     if load_normal_data:
-        train_concat_dataset = ConcatDataset([train_dataset0, train_dataset1, train_dataset2])
-        test_concat_dataset = ConcatDataset([test_dataset0, test_dataset1, test_dataset2])
+        train_concat_dataset = ConcatDataset([dataset0, dataset1, dataset2])
+        test_concat_dataset = ConcatDataset([dataset0_test, dataset1_test, dataset2_test])
     else:
-        train_concat_dataset = ConcatDataset([train_dataset0, train_dataset1])
-        test_concat_dataset = ConcatDataset([test_dataset0, test_dataset1])
+        train_concat_dataset = ConcatDataset([dataset0, dataset1])
+        test_concat_dataset = ConcatDataset([dataset0_test, dataset1_test])
 
     # 创建 DataLoader 对象，加载训练集和测试集
-    train_dataloader = DataLoader(train_concat_dataset, batch_size=bs, shuffle=True, num_workers=4)
-    test_dataloader = DataLoader(test_concat_dataset, batch_size=bs, shuffle=False, num_workers=4)
+    train_dataloader = DataLoader(train_concat_dataset, batch_size=bs, shuffle=True)
+    test_dataloader = DataLoader(test_concat_dataset, batch_size=bs, shuffle=True)
 
     return train_dataloader, test_dataloader
 
@@ -166,18 +176,29 @@ if __name__ == "__main__":
     normMean = [0.32748958, 0.32748246, 0.3274379]
     normStd = [0.22094825, 0.2209481, 0.22093095]
     img_transform = transforms.Compose([
-        transforms.ToPILImage(),
-        transforms.Resize((256, 256)),
-        transforms.ToTensor(),
-        transforms.Normalize(normMean, normStd)
+        # transforms.ToTensor(),
+        # transforms.Resize((256, 256)),
+        # transforms.Normalize(normMean, normStd)
     ])
-    segmentation_dataset = BUSI_segmentation_dataset(path, img_transform)
-    segmentation_dataloader = DataLoader(dataset=segmentation_dataset, batch_size=2, shuffle=False)
-    for img, mask in segmentation_dataloader:
-        img = img.reshape(-1, img.shape[2], img.shape[2])
-        mask = mask.reshape(-1, mask.shape[2], mask.shape[3])
-        print(img[0].shape)
-        print(mask[0].shape)
-        plt.imshow(img[0], cmap='gray')
-        plt.show()
+    train_dataloader, test_dataloader = segment_busi_dataLoader(bs=1)
+    for img, mask in train_dataloader:
+        print(img.shape)
+        print(mask.shape)
+        # img = img.reshape(img.shape[1], img.shape[2], img.shape[3])
+        # mask = mask.reshape(mask.shape[1], mask.shape[2], mask.shape[3])
+        # plt.imshow(img[0], cmap='gray')
+        # plt.show()
+
         break
+    # from PIL import Image
+    # import numpy as np
+    #
+    # img = Image.open(os.path.join('classifer/benign/img/0.png'))
+    # print(type(img))
+    # print(img)
+    # img_np = np.array(img)
+    # print(img_np.shape)
+    # img_tensor = torch.Tensor(img_np)
+
+    # img = Image.fromarray(img_np).save(os.path.join("new_image.png"))
+

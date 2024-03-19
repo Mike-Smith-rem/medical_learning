@@ -37,7 +37,7 @@ def multi_dice_score(label_gt, label_pred, threshold: float = 0.5) -> dict:
     B, C, H, W = label_pred.shape
     # label_pred = torch.argmax(label_pred, dim=1).detach()
     dice_scores = torch.zeros(C, dtype=torch.float32)
-    label_gt = label_gt.view(B, -1)        # label_gt: [B, H*W]
+    label_gt = label_gt.view(B, -1)  # label_gt: [B, H*W]
     label_pred = label_pred.view(B, C, -1)
     label_pred = (label_pred > threshold).int()
 
@@ -64,10 +64,11 @@ def acc_scores(label_gt, label_pred) -> dict:
     eps = 1e-6
     accuracy = torch.zeros(C, dtype=torch.float32)
     for class_id in range(C):
+        # print(f"class {class_id}")
         gt = (label_gt == class_id).int().flatten()
         pred = (label_pred == class_id).int().flatten()
-        accuracy[class_id] = (pred * gt).sum() / (gt.sum() + (pred * (1 - gt)).sum() + eps)
-
+        accuracy[class_id] = ((pred * gt).sum()) / (gt.sum() + ((1 - pred) * gt).sum() + eps)
+    # print("end acc count..")
     return {
         'mean_acc': accuracy.mean(),
         'acc': accuracy
@@ -76,14 +77,14 @@ def acc_scores(label_gt, label_pred) -> dict:
 
 if __name__ == "__main__":
     a = torch.tensor([1, 2, 0, 2, 2, 0, 1, 1, 0])
-    b = torch.tensor([1, 1, 0, 2, 1, 0, 1, 1, 1])
-    b = torch.tensor([[0.1, 0.6, 0.3], # 1
-                      [0.1, 0.6, 0.3], # 1
-                      [0.8, 0.1, 0.1], # 0
-                      [0.1, 0.3, 0.6], # 2
-                      [0.4, 0.6, 0.0], # 1
-                      [0.5, 0.2, 0.3], # 0
-                      [0.1, 0.6, 0.3], # 1
-                      [0.1, 0.6, 0.3], # 1
-                      [0.1, 0.6, 0.3]]) # 1
+    b = torch.tensor([1, 2, 0, 2, 2, 0, 1, 1, 1])
+    b = torch.tensor([[0.1, 0.6, 0.3],  # 1
+                      [0.1, 0.2, 0.7],  # 1
+                      [0.8, 0.1, 0.1],  # 0
+                      [0.1, 0.3, 0.6],  # 2
+                      [0.3, 0.1, 0.6],  # 2
+                      [0.5, 0.2, 0.3],  # 0
+                      [0.1, 0.6, 0.3],  # 1
+                      [0.1, 0.6, 0.3],  # 1
+                      [0.1, 0.6, 0.3]])  # 1
     print(acc_scores(a, b))

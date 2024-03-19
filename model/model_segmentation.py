@@ -127,16 +127,25 @@ class UNet(nn.Module):
             return F.softmax(logits, dim=1)
 
 
-def freeze_encoder(model):
+def freeze_encoder(model, target_model):
     # 冻结加载的参数，不参与训练
+    model.inc.load_state_dict(target_model.inc.state_dict())
     for param in model.inc.parameters():
         param.requires_grad = False
+
+    model.down1.load_state_dict(target_model.down1.state_dict())
     for param in model.down1.parameters():
         param.requires_grad = False
+
+    model.down2.load_state_dict(target_model.down2.state_dict())
     for param in model.down2.parameters():
         param.requires_grad = False
+
+    model.down3.load_state_dict(target_model.down3.state_dict())
     for param in model.down3.parameters():
         param.requires_grad = False
+
+    model.down4.load_state_dict(target_model.down4.state_dict())
     for param in model.down4.parameters():
         param.requires_grad = False
 
