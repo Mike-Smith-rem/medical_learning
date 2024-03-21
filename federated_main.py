@@ -86,7 +86,6 @@ class DatasetSplit(Dataset):
 
     def __len__(self):
         return len(self.idxs)
-
     def __getitem__(self, item):
         image, label, mask = self.dataset[self.idxs[item]]
         return image, label, mask
@@ -97,7 +96,7 @@ class LocalUpdate(object):
         self.args = args
         if args is None:
             self.args = {
-                "local_bs": 10,
+                "local_bs": 8,
                 "lr": 1e-4,
                 "momentum": 0.9,
                 "local_ep": 5,
@@ -252,16 +251,16 @@ def main():
     print("global_model load success!")
     writer = SummaryWriter(log_dir="logs/federated_global" + str(add_unsupervised_train))
     # fourth: train
-    glob_epochs = 100
+    glob_epochs = 200
     for iter in range(glob_epochs):
         print("Epoch:" + str(iter))
         # 1. 将参数下发多个客户端
-        encoder_parameters = [glob_encoder_parameters for i in range(len(clients))]
-        decoder_parameters = [glob_decoder_parameters for i in range(len(clients))]
-        cls_parameters = [glob_classifier_parameters for i in range(len(clients))]
+        encoder_parameters = [glob_encoder_parameters for _ in range(len(clients))]
+        decoder_parameters = [glob_decoder_parameters for _ in range(len(clients))]
+        cls_parameters = [glob_classifier_parameters for _ in range(len(clients))]
         print("split parameters success!")
         # 2. 保存损失
-        loss_locals = [0 for i in range(len(clients))]
+        loss_locals = [0 for _ in range(len(clients))]
         loss_globals = []
 
         # 3. 本地训练，并保存训练后的网络
@@ -347,7 +346,9 @@ def main():
             return test_dict
 
         cls_model = UnetCls(glob_encoder, glob_classifier)
-        acc_avg = cls_test(dataset_test_loader, cls_model, nn.CrossEntropyLoss(), device='cpu')
+        acc_avg = cls_test(dataset_test_loader, cls_model, nn.CrossEntropyLoss(), device=(torch.device('cuda')
+                                                                                          if torch.cuda.is_available()
+                                                                                          else torch.device('cpu')))
         acc_avg = acc_avg['test_acc']
         print('Epoch: {}; Test Acc:{}'.format(iter, acc_avg))
         writer.add_scalar('Acc_Global', acc_avg, iter)
@@ -378,7 +379,9 @@ def main():
             return test_dict
 
         seg_model = UnetSeg(glob_encoder, glob_decoder)
-        dice_avg = seg_test(dataset_test_loader, seg_model, nn.CrossEntropyLoss(), device='cpu')
+        dice_avg = seg_test(dataset_test_loader, seg_model, nn.CrossEntropyLoss(), device=(torch.device('cuda')
+                                                                                          if torch.cuda.is_available()
+                                                                                          else torch.device('cpu')))
         dice_avg = dice_avg['test_dice']
         print('Epoch: {}; Test Dice:{}'.format(iter, dice_avg))
         writer.add_scalar('Dice_Global', dice_avg, iter)
@@ -413,13 +416,13 @@ def single_train(model, train_set, idx, test_loader, device, args_, log):
             loss.backward()
             optimizer.step()
             batch_loss.append(loss.item())
-        single_test(model, test_loader, device, args)
+        single_test(model, test_loader, device, args, log, epoch)
         epoch_loss.append(sum(batch_loss) / len(batch_loss))
-        log.add_scalar('Epoch Training Loss', epoch_loss, epoch)
+        log.add_scalar('Loss_Single', epoch_loss[-1], epoch)
         print('Epoch: {}; Loss: {}'.format(epoch, epoch_loss[-1]))
 
 
-def single_test(model, test_loader, device, args):
+def single_test(model, test_loader, device, args, log, iter):
     model.to(device)
     model.train()
 
@@ -479,14 +482,20 @@ def single_test(model, test_loader, device, args):
     if args['type'] == 'cls':
         acc = cls_test(test_loader, model, nn.CrossEntropyLoss(),
                        torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
-        print("Test Acc: {}".format(acc))
+        log.add_scalar("Test Acc", acc['test_acc'], iter)
+        print("Test Acc Single: {}".format(acc))
     else:
         dice = seg_test(test_loader, model, nn.CrossEntropyLoss(),
                         torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
-        print("Test Dice: {}".format(dice))
+        log.add_scalar("Test Dice", dice['test_dice'], iter)
+        print("Test Dice Single: {}".format(dice))
 
 
 if __name__ == '__main__':
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    random.seed(seed)
+    np.random.seed(seed)
     # add_unsupervised_train = True
     # main()
     # add_unsupervised_train = False
@@ -495,13 +504,13 @@ if __name__ == '__main__':
     test_loader = torch.utils.data.DataLoader(dataset_test, batch_size=4, shuffle=False)
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
     args = {
-        "bs": 4,
+        "bs": 8,
         "lr": 1e-4,
         "momentum": 0.9,
-        "epochs": 1,
+        "epochs": 200,
         "type": 'cls'
     }
-    for i in range(len((clients))):
+    for i in range(len(clients)):
         model = UnetCombine(n_channels=3, n_class1=3, n_class2=2)
         args['type'] = clients[i]
         idx = dict_client_train[i]
