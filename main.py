@@ -92,18 +92,18 @@ if __name__ == '__main__':
     args['criterion'] = 'CrossEntropyLoss'
 
     # 1. 实现Unet分割过程, load_normal_data is true
-    # args['type'] = 'segment'
-    # args['dataset'] = 'busi'
-    # args['model'] = 'unet'
-    # args['load_normal_data'] = True
-    # init()
+    args['type'] = 'segment'
+    args['dataset'] = 'busi'
+    args['model'] = 'unet'
+    args['load_normal_data'] = True
+    init()
 
     # 2. 实现Unet_classifier分类过程， load_normal_data is false
-    # args['type'] = 'classifier'
-    # args['dataset'] = 'busi'
-    # args['model'] = 'unet_classifier'
-    # args['load_normal_data'] = True
-    # init()
+    args['type'] = 'classifier'
+    args['dataset'] = 'busi'
+    args['model'] = 'unet_classifier'
+    args['load_normal_data'] = True
+    init()
 
     # 3. 实现resnet分类过程，load_normal_data is false
     # args['type'] = 'classifier'
@@ -132,12 +132,12 @@ if __name__ == '__main__':
     #                     'True_busi/UNet_Classifier_test_acc_0.8080808080808081.pth'
     # init()
     # 7. 实现Unet encoder冻结，二分割帮助二分类
-    args['type'] = 'classifier'
-    args['mode'] = 'seg_to_cls'
-    args['dataset'] = 'busi'
-    args['model'] = 'unet_classifier'
-    args['mode_path'] = './logs/unet_CrossEntropyLoss_True_busi/UNet_test_dice_0.8335910588502884.pth'
-    init()
+    # args['type'] = 'classifier'
+    # args['mode'] = 'seg_to_cls'
+    # args['dataset'] = 'busi'
+    # args['model'] = 'unet_classifier'
+    # args['mode_path'] = './logs/unet_CrossEntropyLoss_True_busi/UNet_test_dice_0.8335910588502884.pth'
+    # init()
     # 8. 实现联邦场景下的cifar10分类(iid)
 
     # 9. 实现联邦场景下的busi分类(iid)

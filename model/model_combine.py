@@ -159,3 +159,5 @@ class UNet_Combine(nn.Module):
             # print(logits.shape)
             return logits
 
+if __name__ == '__main__':
+    pass
