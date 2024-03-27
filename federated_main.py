@@ -8,7 +8,6 @@ import torch
 from torch import nn
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
-import torch.nn.functional as F
 from torchvision import transforms
 
 from model.model_combine import UnetCombine, UnetEncoder, UnetDecoder, UnetClassifier, UnetCls, UnetSeg
@@ -24,7 +23,6 @@ class busi_dataset(Dataset):
         from PIL import Image
         self.img_names = os.listdir(os.path.join(self.file_dir, 'img'))
         self.mask_names = os.listdir(os.path.join(self.file_dir, 'mask'))
-
         self.imgs = []
         self.labels = []
         self.masks = []
@@ -56,7 +54,10 @@ class busi_dataset(Dataset):
                 transforms.Resize((256, 256)),
                 transforms.ToTensor()
             ])
-            img = self.img_transform(img)
+            try:
+                img = self.img_transform(img)
+            except:
+                print(name)
             label = torch.tensor(label)
             mask = self.masks_transform(mask)
             if mask.max() > 1:
@@ -72,12 +73,10 @@ class busi_dataset(Dataset):
         return self.imgs[idx], self.labels[idx], self.masks[idx]
 
 
+threshold = 0.8
 dataset_train = busi_dataset(train=True)
 dataset_test = busi_dataset(train=False)
-dataset_test_loader = DataLoader(dataset_test, batch_size=2, shuffle=False)
-print("dataset load success!")
-print("----dataset_train_length:" + str(len(dataset_train)))
-print("----dataset_test_length:" + str(len(dataset_test)))
+dataset_test_loader = DataLoader(dataset_test, batch_size=10, shuffle=False)
 
 
 class DatasetSplit(Dataset):
@@ -98,19 +97,20 @@ class LocalUpdate(object):
         self.args = args
         if args is None:
             self.args = {
-                "local_bs": 4,
-                "lr": 1e-4,
+                "local_bs": 8,
+                "lr": 5e-4,
                 "momentum": 0.9,
-                "local_ep": 10,
+                "local_ep": 5,
             }
         self.type = type
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
         self.loss_func = nn.CrossEntropyLoss()
         self.selected_clients = []
         self.ldr_train = DataLoader(DatasetSplit(dataset, idxs),
                                     batch_size=self.args['local_bs'], shuffle=True)
 
     def train(self, net):
+        net.to(self.device)
         net.train()
         # train and update
         optimizer = torch.optim.SGD(net.parameters(), lr=self.args['lr'], momentum=self.args['momentum'])
@@ -144,7 +144,7 @@ class LocalUpdate(object):
                 optimizer.step()
                 if batch_idx % 10 == 0:
                     print('Update Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
-                        iter, batch_idx * len(images), len(self.ldr_train.dataset),
+                        iter, batch_idx * len(images), len(self.ldr_train),
                               100. * batch_idx / len(self.ldr_train), loss.item()))
                 batch_loss.append(loss.item())
             epoch_loss.append(sum(batch_loss) / len(batch_loss))
@@ -158,7 +158,10 @@ class LocalUpdate(object):
                     if changed_type == 'cls':
                         images, labels = images.to(self.device), labels.to(self.device)
                     elif changed_type == 'seg':
+                        # print(mask.shape)
                         images, labels = images.to(self.device), masks.to(self.device)
+                        # print(images.shape, labels.shape)
+                        # print(mask.shape)
                     else:
                         raise NotImplementedError("please check the arguments")
 
@@ -173,12 +176,15 @@ class LocalUpdate(object):
                         log_probs = log_probs.view(B, -1)
 
                     pseudo_values, _ = torch.max(log_probs, dim=1)
-                    threshold = 0.7
                     avaliable_index = [i for i in range(B) if pseudo_values[i].min() > threshold]
                     if len(avaliable_index) == 0:
-                        print("No pseudo value found")
+                        # print("No pseudo value found")
                         continue
-                    preds = torch.index_select(log_probs, dim=0, index=torch.tensor(avaliable_index, dtype=torch.int32))
+                    # print(mask.shape)
+                    # print(images.shape)
+                    # print(labels.shape)
+                    preds = torch.index_select(log_probs, dim=0, index=torch.tensor(avaliable_index, dtype=torch.long).
+                                               to(self.device))
                     pse = torch.argmax(preds, dim=1)
                     unsupervised_loss = self.loss_func(preds, pse)
                     unsupervised_loss.backward()
@@ -186,10 +192,8 @@ class LocalUpdate(object):
                     batch_loss.append(unsupervised_loss)
                     if batch_idx % 10 == 0:
                         print('Update Epoch Unsupervised_type_{}: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\t '
-                              'training_set_length {}'.format(
-                            changed_type, iter, batch_idx * len(images), len(self.ldr_train.dataset),
-                                                100. * batch_idx / len(self.ldr_train), unsupervised_loss.item(),
-                            preds.shape[0]))
+                              .format(changed_type, iter, batch_idx * len(images), len(self.ldr_train),
+                                      100. * batch_idx / len(self.ldr_train), unsupervised_loss.item()))
         return net, sum(epoch_loss) / len(epoch_loss)
 
 
@@ -201,12 +205,28 @@ def iid_busi(dataset, num_clients) -> dict:
         :param dataset:
         :param num_clients:
         :return: dict of image index
-        """
-    num_items = int(len(dataset) / num_clients)
-    dict_clients, all_idxs = {}, [i for i in range(len(dataset))]
+    """
+    # dataset comprised of 0, 1, 2
+    # special handle
+    num_class = 3
+    class0_items = int(len(dataset) / num_clients / num_class)
+    dict_clients, class0_all_idxs = {}, [i for i in range(len(dataset) // num_class)]
     for i in range(num_clients):
-        dict_clients[i] = set(np.random.choice(all_idxs, num_items, replace=False))
-        all_idxs = list(set(all_idxs) - dict_clients[i])
+        dict_clients[i] = set(np.random.choice(class0_all_idxs, class0_items, replace=False))
+        class0_all_idxs = list(set(class0_all_idxs) - dict_clients[i])
+    for i in range(num_clients):
+        class0_index = list(dict_clients[i])
+        class_all_index = list(dict_clients[i])
+        for j in class0_index:
+            t = num_class
+            for k in range(1, t):
+                class_all_index.append(j + len(dataset) // num_class * k)
+        dict_clients[i] = set(class_all_index)
+
+    # print the answer
+    for i in range(len(dict_clients)):
+        d = dict_clients[i]
+        print(sorted(d))
     return dict_clients
 
 
@@ -219,12 +239,10 @@ def FedAvg(w):
     return w_avg
 
 
-clients = ['seg', 'cls', 'cls', 'seg']
+clients = ['seg', 'cls', 'cls', 'seg', 'seg', 'cls', 'cls', 'seg']
 # dict_client is {0: [], 1:[], 2:[], 3:[]}
 dict_client_train = iid_busi(dataset=dataset_train, num_clients=len(clients))
 # dict_client_test = iid_busi(dataset=dataset_test, num_clients=len(clients))
-print("client split success!")
-print("---------------")
 # second set the glob model
 # n_channels: channels of image
 # n_class1: for cls
@@ -234,10 +252,6 @@ seed = 2024
 
 
 def main():
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    random.seed(seed)
-    np.random.seed(seed)
     glob_encoder = UnetEncoder(n_channels=3)
     glob_decoder = UnetDecoder(n_class=2)
     glob_classifier = UnetClassifier(n_class=3)
@@ -249,23 +263,23 @@ def main():
     glob_classifier_parameters = glob_classifier.state_dict()
 
     print("global_model load success!")
-    writer = SummaryWriter(log_dir="logs/federated_global" + str(add_unsupervised_train))
+    writer = SummaryWriter(log_dir="logs/federated_global" + str(add_unsupervised_train) + str(threshold))
     # fourth: train
-    glob_epochs = 2
+    glob_epochs = 200
     for iter in range(glob_epochs):
         print("Epoch:" + str(iter))
         # 1. 将参数下发多个客户端
-        encoder_parameters = [glob_encoder_parameters for i in range(len(clients))]
-        decoder_parameters = [glob_decoder_parameters for i in range(len(clients))]
-        cls_parameters = [glob_classifier_parameters for i in range(len(clients))]
+        encoder_parameters = [glob_encoder_parameters for _ in range(len(clients))]
+        decoder_parameters = [glob_decoder_parameters for _ in range(len(clients))]
+        cls_parameters = [glob_classifier_parameters for _ in range(len(clients))]
         print("split parameters success!")
         # 2. 保存损失
-        loss_locals = [0 for i in range(len(clients))]
+        loss_locals = [0 for _ in range(len(clients))]
         loss_globals = []
 
         # 3. 本地训练，并保存训练后的网络
         for i in range(len(clients)):
-            local = LocalUpdate(clients[i], None, dataset_train, dict_client_train)
+            local = LocalUpdate(clients[i], None, dataset_train, dict_client_train[i])
             if not add_unsupervised_train:
                 # encoder part
                 local_encoder = UnetEncoder(n_channels=3)
@@ -318,6 +332,7 @@ def main():
         writer.add_scalar('Loss_Global', loss_avg, iter)
 
         def cls_test(val_loader, model, criterion, device) -> dict:
+            model.to(device)
             model.eval()
             test_dict = {
                 'test_loss': 0.,
@@ -345,12 +360,15 @@ def main():
             return test_dict
 
         cls_model = UnetCls(glob_encoder, glob_classifier)
-        acc_avg = cls_test(dataset_test_loader, cls_model, nn.CrossEntropyLoss(), device='cpu')
+        acc_avg = cls_test(dataset_test_loader, cls_model, nn.CrossEntropyLoss(), device=(torch.device('cuda:1')
+                                                                                          if torch.cuda.is_available()
+                                                                                          else torch.device('cpu')))
         acc_avg = acc_avg['test_acc']
         print('Epoch: {}; Test Acc:{}'.format(iter, acc_avg))
         writer.add_scalar('Acc_Global', acc_avg, iter)
 
         def seg_test(val_loader, model, criterion, device) -> dict:
+            model.to(device)
             model.eval()
             test_dict = {
                 'test_loss': 0.,
@@ -375,14 +393,159 @@ def main():
             return test_dict
 
         seg_model = UnetSeg(glob_encoder, glob_decoder)
-        dice_avg = seg_test(dataset_test_loader, seg_model, nn.CrossEntropyLoss(), device='cpu')
+        dice_avg = seg_test(dataset_test_loader, seg_model, nn.CrossEntropyLoss(), device=(torch.device('cuda:1')
+                                                                                           if torch.cuda.is_available()
+                                                                                           else torch.device('cpu')))
         dice_avg = dice_avg['test_dice']
         print('Epoch: {}; Test Dice:{}'.format(iter, dice_avg))
         writer.add_scalar('Dice_Global', dice_avg, iter)
 
 
+def single_train(model, train_set, idx, test_loader, device, args_, log):
+    model.to(device)
+    model.train()
+    args = args_
+
+    criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=args['lr'], momentum=args['momentum'])
+    train_loader = DataLoader(DatasetSplit(train_set, idx), batch_size=args['bs'], shuffle=True)
+    epoch_loss = []
+    for epoch in range(args['epochs']):
+        batch_loss = []
+        for imgs, labels, masks in train_loader:
+            imgs = imgs.to(device)
+            labels = labels.to(device)
+            masks = masks.to(device)
+            optimizer.zero_grad()
+            log_probs = model(imgs, args['type'])
+            if args['type'] == 'seg':
+                B, C, H, W = log_probs.shape
+                log_probs = log_probs.view(B, C, -1)
+                labels = masks.view(B, -1).long()
+            else:
+                B, C = log_probs.shape
+                log_probs = log_probs.view(B, -1)
+                labels = labels.view(-1).long()
+                print("log_probs is {}".format(log_probs))
+                print("labels is {}".format(labels))
+            loss = criterion(log_probs, labels)
+            loss.backward()
+            optimizer.step()
+            batch_loss.append(loss.item())
+        single_test(model, test_loader, device, args, log, epoch)
+        epoch_loss.append(sum(batch_loss) / len(batch_loss))
+        log.add_scalar('Loss_Single', epoch_loss[-1], epoch)
+        print('Epoch: {}; Loss: {}'.format(epoch, epoch_loss[-1]))
+
+
+def single_test(model, test_loader, device, args, log, iter):
+    model.to(device)
+    model.train()
+
+    def seg_test(val_loader, model, criterion, device) -> dict:
+        model.to(device)
+        model.eval()
+        test_dict = {
+            'test_loss': 0.,
+            'test_dice': 0.,
+        }
+        with torch.no_grad():
+            for img, _, mask in val_loader:
+                img, label = img.to(device), mask.to(device)
+                pred = model(img, 'seg')
+                B, C, H, W = pred.shape
+                pred = pred.view(B, C, -1)
+                label = label.view(B, -1).long()
+                loss = criterion(pred, label)
+                dice_val = binary_dice_score(label_gt=label, label_pred=pred)
+                test_dict['test_loss'] += loss.item()
+                test_dict['test_dice'] += dice_val['dice'].item()
+
+        test_dict = {
+            'test_loss': test_dict['test_loss'] / len(val_loader),
+            'test_dice': test_dict['test_dice'] / len(val_loader)
+        }
+        return test_dict
+
+    def cls_test(val_loader, model, criterion, device) -> dict:
+        model.to(device)
+        model.eval()
+        test_dict = {
+            'test_loss': 0.,
+            'test_acc': 0.,
+            # 'test_acc_all': 0.
+        }
+        with torch.no_grad():
+            for img, label, _ in val_loader:
+                img, label = img.to(device), label.to(device)
+                pred = model(img, 'cls')
+                B, C = pred.shape
+                pred = pred.view(B, -1)
+                label = label.view(-1).long()
+                loss = criterion(pred, label)
+                dice_val = acc_scores(label, pred)
+                test_dict['test_loss'] += loss.item()
+                test_dict['test_acc'] += dice_val['mean_acc'].item()
+                # test_dict['test_acc_all'] += dice_val['acc']
+
+        test_dict = {
+            'test_loss': test_dict['test_loss'] / len(val_loader),
+            'test_acc': test_dict['test_acc'] / len(val_loader),
+            # 'test_acc_all': test_dict['test_acc_all'] / len(val_loader)
+        }
+        return test_dict
+
+    if args['type'] == 'cls':
+        acc = cls_test(test_loader, model, nn.CrossEntropyLoss(),
+                       torch.device('cuda:1') if torch.cuda.is_available() else torch.device('cpu'))
+        log.add_scalar("Test Acc", acc['test_acc'], iter)
+        print("Test Acc Single: {}".format(acc))
+    else:
+        dice = seg_test(test_loader, model, nn.CrossEntropyLoss(),
+                        torch.device('cuda:1') if torch.cuda.is_available() else torch.device('cpu'))
+        log.add_scalar("Test Dice", dice['test_dice'], iter)
+        print("Test Dice Single: {}".format(dice))
+
+
 if __name__ == '__main__':
-    add_unsupervised_train = True
-    main()
-    add_unsupervised_train = False
-    main()
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    train_set = dataset_train
+    test_loader = torch.utils.data.DataLoader(dataset_test, batch_size=4, shuffle=False)
+    device = torch.device('cuda:1') if torch.cuda.is_available() else torch.device('cpu')
+    args = {
+        "bs": 8,
+        "lr": 1e-4,
+        "momentum": 0.9,
+        "epochs": 200,
+        "type": 'cls'
+    }
+    for i in range(len(clients)):
+        model = UnetCombine(n_channels=3, n_class1=3, n_class2=2)
+        args['type'] = clients[i]
+        idx = dict_client_train[i]
+        print(len(idx))
+        logger = SummaryWriter(log_dir='./logs/{}_{}'.format(i, clients[i]))
+        # debug
+        if args['type'] == 'cls':
+            single_train(model, train_set, idx, test_loader, device, args, logger)
+            break
+        else:
+            continue
+
+    # add_unsupervised_train = False
+    # main()
+
+    # threshold = 0.7
+    # add_unsupervised_train = True
+    # main()
+    #
+    # threshold = 0.8
+    # add_unsupervised_train = True
+    # main()
+    #
+    # threshold = 0.9
+    # add_unsupervised_train = True
+    # main()
