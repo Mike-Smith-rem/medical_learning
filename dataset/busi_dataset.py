@@ -138,9 +138,9 @@ def classifer_busi_dataloader(load_normal_data=True, bs=32, info=None, debug=Tru
 
     # 将父目录添加到Python路径中
     sys.path.append(current_dir)
-    path0 = os.path.join(current_dir, "classifer/train100/benign")
-    path1 = os.path.join(current_dir, "classifer/train100/malignant")
-    path2 = os.path.join(current_dir, "classifer/train100/normal")
+    path0 = os.path.join(current_dir, "test/train100/benign")
+    path1 = os.path.join(current_dir, "test/train100/malignant")
+    path2 = os.path.join(current_dir, "test/train100/normal")
 
     img_transform = transforms.Compose([
         transforms.ToTensor(),
@@ -151,11 +151,11 @@ def classifer_busi_dataloader(load_normal_data=True, bs=32, info=None, debug=Tru
     dataset1 = BUSI_classifier_dataSet(path1, 1, img_transform)
     dataset2 = BUSI_classifier_dataSet(path2, 2, img_transform)
 
-    path0_test = os.path.join(current_dir, "classifer/test100/benign")
+    path0_test = os.path.join(current_dir, "test/test100/benign")
     dataset0_test = BUSI_classifier_dataSet(path0_test, 0, img_transform)
-    path1_test = os.path.join(current_dir, "classifer/test100/malignant")
+    path1_test = os.path.join(current_dir, "test/test100/malignant")
     dataset1_test = BUSI_classifier_dataSet(path1_test, 1, img_transform)
-    path2_test = os.path.join(current_dir, "classifer/test100/normal")
+    path2_test = os.path.join(current_dir, "test/test100/normal")
     dataset2_test = BUSI_classifier_dataSet(path2_test, 2, img_transform)
     if load_normal_data:
         train_concat_dataset = ConcatDataset([dataset0, dataset1, dataset2])

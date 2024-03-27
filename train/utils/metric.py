@@ -67,7 +67,7 @@ def acc_scores(label_gt, label_pred) -> dict:
         # print(f"class {class_id}")
         gt = (label_gt == class_id).int().flatten()
         pred = (label_pred == class_id).int().flatten()
-        accuracy[class_id] = ((pred * gt).sum()) / (gt.sum() + ((1 - pred) * gt).sum() + eps)
+        accuracy[class_id] = ((pred * gt).sum()) / (gt.sum() + pred.sum() - (pred * gt).sum() + eps)
     # print("end acc count..")
     return {
         'mean_acc': accuracy.mean(),
@@ -79,7 +79,7 @@ if __name__ == "__main__":
     a = torch.tensor([1, 2, 0, 2, 2, 0, 1, 1, 0])
     b = torch.tensor([1, 2, 0, 2, 2, 0, 1, 1, 1])
     b = torch.tensor([[0.1, 0.6, 0.3],  # 1
-                      [0.1, 0.2, 0.7],  # 1
+                      [0.1, 0.2, 0.7],  # 2
                       [0.8, 0.1, 0.1],  # 0
                       [0.1, 0.3, 0.6],  # 2
                       [0.3, 0.1, 0.6],  # 2
