@@ -9,8 +9,9 @@ from torch import nn
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
+from tqdm import tqdm
 
-from model.model_combine import UnetCombine, UnetEncoder, UnetDecoder, UnetClassifier, UnetCls, UnetSeg
+from model.unet.model_combine import UnetCombine, UnetEncoder, UnetDecoder, UnetClassifier, UnetCls, UnetSeg
 from train.utils.metric import acc_scores, binary_dice_score
 
 
@@ -76,7 +77,7 @@ class busi_dataset(Dataset):
 threshold = 0.8
 dataset_train = busi_dataset(train=True)
 dataset_test = busi_dataset(train=False)
-dataset_test_loader = DataLoader(dataset_test, batch_size=10, shuffle=False)
+dataset_test_loader = DataLoader(dataset_test, batch_size=9, shuffle=False)
 
 
 class DatasetSplit(Dataset):
@@ -103,7 +104,7 @@ class LocalUpdate(object):
                 "local_ep": 5,
             }
         self.type = type
-        self.device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.loss_func = nn.CrossEntropyLoss()
         self.selected_clients = []
         self.ldr_train = DataLoader(DatasetSplit(dataset, idxs),
@@ -224,9 +225,9 @@ def iid_busi(dataset, num_clients) -> dict:
         dict_clients[i] = set(class_all_index)
 
     # print the answer
-    for i in range(len(dict_clients)):
-        d = dict_clients[i]
-        print(sorted(d))
+    # for i in range(len(dict_clients)):
+    #     d = dict_clients[i]
+    #     print(sorted(d))
     return dict_clients
 
 
@@ -360,7 +361,7 @@ def main():
             return test_dict
 
         cls_model = UnetCls(glob_encoder, glob_classifier)
-        acc_avg = cls_test(dataset_test_loader, cls_model, nn.CrossEntropyLoss(), device=(torch.device('cuda:1')
+        acc_avg = cls_test(dataset_test_loader, cls_model, nn.CrossEntropyLoss(), device=(torch.device('cuda:0')
                                                                                           if torch.cuda.is_available()
                                                                                           else torch.device('cpu')))
         acc_avg = acc_avg['test_acc']
@@ -393,7 +394,7 @@ def main():
             return test_dict
 
         seg_model = UnetSeg(glob_encoder, glob_decoder)
-        dice_avg = seg_test(dataset_test_loader, seg_model, nn.CrossEntropyLoss(), device=(torch.device('cuda:1')
+        dice_avg = seg_test(dataset_test_loader, seg_model, nn.CrossEntropyLoss(), device=(torch.device('cuda:0')
                                                                                            if torch.cuda.is_available()
                                                                                            else torch.device('cpu')))
         dice_avg = dice_avg['test_dice']
@@ -408,16 +409,19 @@ def single_train(model, train_set, idx, test_loader, device, args_, log):
 
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.SGD(model.parameters(), lr=args['lr'], momentum=args['momentum'])
-    train_loader = DataLoader(DatasetSplit(train_set, idx), batch_size=args['bs'], shuffle=True)
+    # train_loader = DataLoader(DatasetSplit(train_set, idx), batch_size=args['bs'], shuffle=True)
+    # 假设全部训练
+    train_loader = DataLoader(train_set, batch_size=args['bs'], shuffle=True)
     epoch_loss = []
     for epoch in range(args['epochs']):
         batch_loss = []
-        for imgs, labels, masks in train_loader:
+        for imgs, labels, masks in tqdm(train_loader):
             imgs = imgs.to(device)
             labels = labels.to(device)
             masks = masks.to(device)
             optimizer.zero_grad()
             log_probs = model(imgs, args['type'])
+            # log_probs = model(imgs)
             if args['type'] == 'seg':
                 B, C, H, W = log_probs.shape
                 log_probs = log_probs.view(B, C, -1)
@@ -426,8 +430,6 @@ def single_train(model, train_set, idx, test_loader, device, args_, log):
                 B, C = log_probs.shape
                 log_probs = log_probs.view(B, -1)
                 labels = labels.view(-1).long()
-                print("log_probs is {}".format(log_probs))
-                print("labels is {}".format(labels))
             loss = criterion(log_probs, labels)
             loss.backward()
             optimizer.step()
@@ -438,9 +440,9 @@ def single_train(model, train_set, idx, test_loader, device, args_, log):
         print('Epoch: {}; Loss: {}'.format(epoch, epoch_loss[-1]))
 
 
-def single_test(model, test_loader, device, args, log, iter):
+def single_test(model, test_loader, device, args, log, iter, last_round=False):
     model.to(device)
-    model.train()
+    model.eval()
 
     def seg_test(val_loader, model, criterion, device) -> dict:
         model.to(device)
@@ -450,10 +452,22 @@ def single_test(model, test_loader, device, args, log, iter):
             'test_dice': 0.,
         }
         with torch.no_grad():
+            time = 0
             for img, _, mask in val_loader:
                 img, label = img.to(device), mask.to(device)
                 pred = model(img, 'seg')
                 B, C, H, W = pred.shape
+                if last_round:
+                    pred = torch.argmax(pred, dim=1)
+                    pred = pred.reshape(B, H, W, 1).detach().cpu().numpy()
+                    label = label.reshape(B, H, W, 1).detach().cpu().numpy()
+                    for i in range(B):
+                        img = pred[i]
+                        lb = label[i]
+                        log.add_image("Test Image", img, global_step=time)
+                        log.add_image('Test Mask', lb, global_step=time)
+                        time = time + 1
+                    continue
                 pred = pred.view(B, C, -1)
                 label = label.view(B, -1).long()
                 loss = criterion(pred, label)
@@ -476,33 +490,42 @@ def single_test(model, test_loader, device, args, log, iter):
             # 'test_acc_all': 0.
         }
         with torch.no_grad():
+            preds = []
+            labels = []
+            loss = 0
             for img, label, _ in val_loader:
                 img, label = img.to(device), label.to(device)
-                pred = model(img, 'cls')
+                # pred = model(img, 'cls')
+                pred = model(img)
                 B, C = pred.shape
+                # load pred and labels
                 pred = pred.view(B, -1)
                 label = label.view(-1).long()
-                loss = criterion(pred, label)
-                dice_val = acc_scores(label, pred)
-                test_dict['test_loss'] += loss.item()
-                test_dict['test_acc'] += dice_val['mean_acc'].item()
-                # test_dict['test_acc_all'] += dice_val['acc']
+                preds.append(pred)
+                labels.append(label)
+                loss += criterion(pred, label).item()
+            label = torch.cat(labels, dim=0)
+            pred = torch.cat(preds, dim=0)
+            dice_val = acc_scores(label, pred)
+            test_dict['test_loss'] = loss
+            test_dict['test_acc'] = dice_val['mean_acc'].item()
+            # test_dict['test_acc_all'] += dice_val['acc']
 
         test_dict = {
-            'test_loss': test_dict['test_loss'] / len(val_loader),
-            'test_acc': test_dict['test_acc'] / len(val_loader),
+            'test_loss': test_dict['test_loss'],
+            'test_acc': test_dict['test_acc'],
             # 'test_acc_all': test_dict['test_acc_all'] / len(val_loader)
         }
         return test_dict
 
     if args['type'] == 'cls':
         acc = cls_test(test_loader, model, nn.CrossEntropyLoss(),
-                       torch.device('cuda:1') if torch.cuda.is_available() else torch.device('cpu'))
+                       torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu'))
         log.add_scalar("Test Acc", acc['test_acc'], iter)
         print("Test Acc Single: {}".format(acc))
     else:
         dice = seg_test(test_loader, model, nn.CrossEntropyLoss(),
-                        torch.device('cuda:1') if torch.cuda.is_available() else torch.device('cpu'))
+                        torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu'))
         log.add_scalar("Test Dice", dice['test_dice'], iter)
         print("Test Dice Single: {}".format(dice))
 
@@ -513,39 +536,39 @@ if __name__ == '__main__':
     random.seed(seed)
     np.random.seed(seed)
     train_set = dataset_train
-    test_loader = torch.utils.data.DataLoader(dataset_test, batch_size=4, shuffle=False)
-    device = torch.device('cuda:1') if torch.cuda.is_available() else torch.device('cpu')
+    test_loader = torch.utils.data.DataLoader(dataset_test, batch_size=9, shuffle=False)
+    device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
     args = {
-        "bs": 8,
-        "lr": 1e-4,
+        "bs": 16,
+        "lr": 1e-5,
         "momentum": 0.9,
         "epochs": 200,
         "type": 'cls'
     }
-    for i in range(len(clients)):
-        model = UnetCombine(n_channels=3, n_class1=3, n_class2=2)
+    for i in range(2):
+        # model = UnetCombine(n_channels=3, n_class1=3, n_class2=2)
+        # resnet = torchvision.models.resnet18(pretrained=True)
+        # vgg16.load_state_dict(torch.load(os.path.join('logs/vgg16-397923af.pth')))
+        # num_features = resnet.fc.in_features
+        # resnet.fc = nn.Linear(num_features, 3)
+        from model.resunet.rescombine import Res34_Unet_Combine
+        resunet = Res34_Unet_Combine(class_seg=2, class_cls=3)
+
         args['type'] = clients[i]
         idx = dict_client_train[i]
-        print(len(idx))
-        logger = SummaryWriter(log_dir='./logs/{}_{}'.format(i, clients[i]))
+        logger = SummaryWriter(log_dir='./logs/{}_{}_{}'.format(i, clients[i], 'resunet'))
         # debug
-        if args['type'] == 'cls':
-            single_train(model, train_set, idx, test_loader, device, args, logger)
-            break
-        else:
-            continue
+        # if args['type'] == 'cls':
+        # single_train(resunet, train_set, idx, test_loader, device, args, logger)
 
-    # add_unsupervised_train = False
-    # main()
-
-    # threshold = 0.7
-    # add_unsupervised_train = True
-    # main()
-    #
-    # threshold = 0.8
-    # add_unsupervised_train = True
-    # main()
-    #
-    # threshold = 0.9
-    # add_unsupervised_train = True
-    # main()
+        path = 'checkpoint'
+        if not os.path.exists(path):
+            os.makedirs(path)
+        torch.save(resunet.state_dict(), os.path.join(path, 'resunet_{}.pth'.format(args['type'])))
+        single_test(resunet, test_loader, device, args, logger, iter=args['epochs'], last_round=True)
+        import sys
+        sys.exit(1)
+        # single_test(model, test_loader, device, args, logger, iter=0)
+        #     break
+        # else:
+        #     continue

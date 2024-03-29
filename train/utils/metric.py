@@ -2,6 +2,7 @@
 # https://github.com/wkentaro/pytorch-fcn/blob/master/torchfcn/utils.py
 
 import torch
+import numpy as np
 
 
 def binary_dice_score(label_gt, label_pred, threshold: float = 0.5) -> dict:
@@ -14,10 +15,12 @@ def binary_dice_score(label_gt, label_pred, threshold: float = 0.5) -> dict:
     epsilon = 1.0e-6
     B, C = label_pred.shape[0], label_pred.shape[1]
     label_gt = label_gt.detach().view(B, -1)
+    label_pred = label_pred.detach().view(B, C, -1)
     label_pred = torch.argmax(label_pred, dim=1)
-    label_pred = label_pred.detach().view(B, -1)
 
-    label_pred = (label_pred > threshold).int()
+    # label_pred = (label_pred > threshold).int()
+    # print(label_gt)
+    # print(label_pred)
     if label_gt.max() == 0:
         label_gt = 1 - label_gt
         label_pred = 1 - label_pred
@@ -68,23 +71,90 @@ def acc_scores(label_gt, label_pred) -> dict:
         gt = (label_gt == class_id).int().flatten()
         pred = (label_pred == class_id).int().flatten()
         accuracy[class_id] = ((pred * gt).sum()) / (gt.sum() + pred.sum() - (pred * gt).sum() + eps)
+    acc_total = (label_pred == label_gt).int().sum() / torch.ones(label_gt.shape).sum()
     # print("end acc count..")
     return {
-        'mean_acc': accuracy.mean(),
+        'mean_acc': acc_total,
         'acc': accuracy
     }
 
 
+# 在训练网络前定义函数用于计算Acc 和 mIou
+# 计算混淆矩阵
+# reference from https://blog.csdn.net/weixin_43143670/article/details/104791946
+def _fast_hist(label_true, label_pred, n_class):
+    '''
+    overview: classification matrixs. returns a tensor
+    :param label_true:  size [B,]
+    :param label_pred:  size [B,](already use argmax)
+    :param n_class: the class number
+    :return: a tensor shaped of [C, C], where c is the class number
+    '''
+    mask = (label_true >= 0) & (label_true < n_class)
+    hist = torch.bincount(
+        n_class * torch.tensor(label_true[mask], dtype=torch.int) +
+        label_pred[mask], minlength=n_class ** 2).reshape(n_class, n_class)
+    return hist
+
+
+# 根据混淆矩阵计算Acc和mIou
+def label_accuracy_score(label_trues, label_preds, n_class):
+    '''
+    overview: return the overall acc and iu
+    :param label_trues: shape [B,]
+    :param label_preds: shape [B, C]
+    :param n_class: C
+    :return: total_acc, mean_acc, mean_iu
+    '''
+    hist = torch.zeros((n_class, n_class))
+    # FIXME: there is no need to segment the B dimension
+    # for lt, lp in zip(label_trues, label_preds):
+    hist += _fast_hist(label_trues.flatten(), label_preds.flatten(), n_class)
+    print(hist)
+    acc = torch.diag(hist).sum() / hist.sum()
+    with torch.no_grad():
+        acc_cls = torch.diag(hist) / hist.sum(dim=1)
+    acc_cls = np.nanmean(acc_cls.detach().numpy())
+    with torch.no_grad():
+        iu = torch.diag(hist) / (
+                hist.sum(dim=1) + hist.sum(dim=0) - torch.diag(hist)
+        )
+    mean_iu = np.nanmean(iu.detach().numpy())
+    freq = hist.sum(dim=1) / hist.sum()
+    return acc, acc_cls, mean_iu
+
+
 if __name__ == "__main__":
-    a = torch.tensor([1, 2, 0, 2, 2, 0, 1, 1, 0])
-    b = torch.tensor([1, 2, 0, 2, 2, 0, 1, 1, 1])
-    b = torch.tensor([[0.1, 0.6, 0.3],  # 1
-                      [0.1, 0.2, 0.7],  # 2
-                      [0.8, 0.1, 0.1],  # 0
-                      [0.1, 0.3, 0.6],  # 2
-                      [0.3, 0.1, 0.6],  # 2
-                      [0.5, 0.2, 0.3],  # 0
-                      [0.1, 0.6, 0.3],  # 1
-                      [0.1, 0.6, 0.3],  # 1
-                      [0.1, 0.6, 0.3]])  # 1
-    print(acc_scores(a, b))
+    # a = torch.tensor([1, 2, 0, 2, 2, 0, 1, 1, 0])
+    # b = torch.tensor([1, 2, 0, 2, 2, 0, 1, 1, 1])
+    # b = torch.tensor([[0.1, 0.6, 0.3],  # 1
+    #                   [0.1, 0.2, 0.7],  # 2
+    #                   [0.8, 0.1, 0.1],  # 0
+    #                   [0.1, 0.3, 0.6],  # 2
+    #                   [0.3, 0.1, 0.6],  # 2
+    #                   [0.5, 0.2, 0.3],  # 0
+    #                   [0.1, 0.6, 0.3],  # 1
+    #                   [0.1, 0.6, 0.3],  # 1
+    #                   [0.1, 0.6, 0.3]])  # 1
+    # acc, acc_cls, mean_iu = label_accuracy_score(a, torch.argmax(b, dim=1), 3)
+    a = torch.tensor([[[0, 0, 0], [0, 0, 0], [0, 0, 0]],
+                      [[0, 0, 0], [0, 0, 0], [0, 0, 0]]])
+    b = torch.tensor([
+                    [
+                        [[0.6, 0.4, 0.6],
+                        [0.9, 0.1, 0.1],
+                        [0.9, 0.9, 0.9]],
+                        [[0.4, 0.6, 0.4],
+                         [0.1, 0.9, 0.9],
+                         [0.1, 0.1, 0.1]],
+                    ],
+                    [
+                        [[0.6, 0.4, 0.6],
+                         [0.9, 0.1, 0.1],
+                         [0.9, 0.9, 0.9]],
+                        [[0.4, 0.6, 0.4],
+                         [0.1, 0.9, 0.9],
+                         [0.1, 0.1, 0.1]],
+                    ]
+    ])
+    print(binary_dice_score(a, b))

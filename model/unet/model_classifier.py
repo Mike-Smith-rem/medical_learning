@@ -53,7 +53,10 @@ class UNet_Classifier(nn.Module):
         # self.mlp = MLP(1024 // factor, [256], 128)
 
         # 分类器
-        self.classifier = nn.Linear(1024 // factor, n_classes)
+        self.classifier = nn.Sequential(
+            MLP(1024 // factor, [256], 128),
+            nn.Linear(1024 // factor, n_classes)
+        )
 
     def forward(self, x):
         x = self.inc(x)

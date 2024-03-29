@@ -2,10 +2,9 @@ import torch
 from torch import nn
 from torchvision.models import resnet18, vgg16
 
-from .model_classifier import UNet_Classifier
-from .model_segmentation import UNet
-from .model_segmentation import freeze_encoder
-from .model_segmentation import UNet
+from unet.model_classifier import UNet_Classifier
+from unet.model_segmentation import freeze_encoder
+from unet.model_segmentation import UNet
 
 
 def build_cls_model(model_name, config, mode=None, mode_path=None):
@@ -49,3 +48,19 @@ def build_seg_model(model_name, config, mode=None, mode_path=None):
     else:
         raise NotImplementedError(f'Unsupported model: {model_name}')
     return model
+
+
+def build_resUnet(model_name, config):
+    if model_name == 'resnet18':
+        from resunet.resunet import Res18_UNet
+        n_class = config['n_class']
+        return Res18_UNet(n_classes=n_class)
+    else:
+        raise NotImplementedError(f'Unsupported model: {model_name}')
+
+
+if __name__ == '__main__':
+    model = build_resUnet('resnet18', {'n_class': 2})
+    img = torch.rand([1, 3, 256, 256])
+    print(model(img).shape)
+
