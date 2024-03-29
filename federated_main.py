@@ -459,13 +459,13 @@ def single_test(model, test_loader, device, args, log, iter, last_round=False):
                 B, C, H, W = pred.shape
                 if last_round:
                     pred = torch.argmax(pred, dim=1)
-                    pred = pred.reshape(B, H, W, 1).detach().cpu().numpy()
-                    label = label.reshape(B, H, W, 1).detach().cpu().numpy()
+                    pred = pred.detach().cpu().numpy()
+                    label = label.detach().cpu().squeeze(1).numpy()
                     for i in range(B):
-                        img = pred[i]
-                        lb = label[i]
-                        log.add_image("Test Image", img, global_step=time)
-                        log.add_image('Test Mask', lb, global_step=time)
+                        img = (pred[i]) * 255
+                        lb = (label[i]) * 255
+                        log.add_image("Test Image", img, global_step=time, dataformats='HW')
+                        log.add_image('Test Mask', lb, global_step=time, dataformats='HW')
                         time = time + 1
                     continue
                 pred = pred.view(B, C, -1)
@@ -539,7 +539,7 @@ if __name__ == '__main__':
     test_loader = torch.utils.data.DataLoader(dataset_test, batch_size=9, shuffle=False)
     device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
     args = {
-        "bs": 16,
+        "bs": 8,
         "lr": 1e-5,
         "momentum": 0.9,
         "epochs": 200,
@@ -551,8 +551,8 @@ if __name__ == '__main__':
         # vgg16.load_state_dict(torch.load(os.path.join('logs/vgg16-397923af.pth')))
         # num_features = resnet.fc.in_features
         # resnet.fc = nn.Linear(num_features, 3)
-        from model.resunet.rescombine import Res34_Unet_Combine
-        resunet = Res34_Unet_Combine(class_seg=2, class_cls=3)
+        from model.resunet.rescombine import Res50_Unet_Combine
+        resunet = Res50_Unet_Combine(class_seg=2, class_cls=3)
 
         args['type'] = clients[i]
         idx = dict_client_train[i]
