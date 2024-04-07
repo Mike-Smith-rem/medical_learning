@@ -2,9 +2,9 @@ import torch
 from torch import nn
 from torchvision.models import resnet18, vgg16
 
-from unet.model_classifier import UNet_Classifier
-from unet.model_segmentation import freeze_encoder
-from unet.model_segmentation import UNet
+from unet_old.model_classifier import UNet_Classifier
+from unet_old.model_segmentation import freeze_encoder
+from unet_old.model_segmentation import UNet
 
 
 def build_cls_model(model_name, config, mode=None, mode_path=None):

@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+import torch.nn.functional as F
 
 
 class FocalLoss(nn.Module):
@@ -39,11 +40,11 @@ class FocalLoss(nn.Module):
 
         # 展开
         labels = labels.view(B, -1).long()  # labels:[B, H*W]
-        preds = preds.view(B, C, -1)        # preds: [B, C, H*W]
+        preds = preds.view(B, C, -1)  # preds: [B, C, H*W]
         label_reshaped = labels.detach().view(B, 1, -1)
         preds = torch.gather(preds, dim=1, index=label_reshaped)  # preds: [B, H*W]
         eps = 1e-7  # 防止数值超出定义域
-        alpha = self.alpha[labels]          # alpha: [B, H*W]
+        alpha = self.alpha[labels]  # alpha: [B, H*W]
         # 开始计算
         loss = (-1 * alpha *
                 torch.pow((1 - preds), self.gamma) *
@@ -55,9 +56,9 @@ class FocalLoss(nn.Module):
             return torch.sum(loss)
 
 
-class SoftDiceLoss(nn.Module):
-    def __init__(self, alpha=None, num_classes=2, size_average=True):
-        super(SoftDiceLoss, self).__init__()
+class BinaryDiceLoss(nn.Module):
+    def __init__(self, alpha=None, num_classes=1, size_average=True):
+        super(BinaryDiceLoss, self).__init__()
 
         if alpha is None:
             self.alpha = torch.ones(num_classes)
@@ -75,24 +76,27 @@ class SoftDiceLoss(nn.Module):
     def forward(self, preds: torch.Tensor, labels: torch.Tensor):
         """
         forward
-        :param preds: size [B, C, H, W]
+        :param preds: size [B, 2, H, W] or [B, 1, H, W]
         :param labels: size [B, H, W] or [B, 1, H, W]
         :return:
         """
         B, C, H, W = preds.shape
         smooth = 1e-7
-        probs = preds.view(B, C, -1)
-        labels = labels.long().view(B, -1)
+        if C == 2:
+            preds = F.softmax(preds, dim=1)
+            preds = preds[:, 0, :, :]
+        probs = preds.view(B, -1)
+        labels = labels.view(B, -1)
         loss = torch.zeros(self.num_classes, device=preds.device)
         weight = self.alpha.to(preds.device)
-        for i in range(C):
-            m1 = probs[:, i]  # m1: [B, H*W]
-            labels = (labels == (i + 1)).long()
-            m2 = labels.view(B, -1)  # m2: [B, H*W]
-            intersection = (m1 * m2)
-            cls_score = 2. * (intersection.sum() + smooth) / (m1.sum() + m2.sum() + smooth)
-            cls_score = 1 - cls_score.sum() / B
-            loss[i] = cls_score * weight[i]
+
+        m1 = probs  # m1: [B, H*W]
+        labels = labels
+        m2 = labels.view(B, -1)  # m2: [B, H*W]
+        intersection = (m1 * m2)
+        cls_score = 2. * (intersection.sum() + smooth) / (m1.sum() + m2.sum() + smooth)
+        cls_score = 1 - cls_score
+        loss = cls_score * weight
 
         if self.size_average:
             return torch.mean(loss)

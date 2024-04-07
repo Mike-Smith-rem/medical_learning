@@ -3,6 +3,7 @@ Created 28 16:57:40
 '''
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from .resnet_blocks import BasicBlock
 from .resunet import _resnet
@@ -55,6 +56,7 @@ class Res50_Unet_Combine(nn.Module):
         return classifier
 
     def forward(self, x, type):
+        x = x.to(torch.float32)
         features = self.encoder(x)[0:self.level]
         # print('encoder feature: {}'.format(features[-2].shape))
         # for feat in features:
@@ -67,6 +69,7 @@ class Res50_Unet_Combine(nn.Module):
             x = avg(x)
             x = torch.flatten(x, 1)
             x = fc(x)
+            x = F.softmax(x, dim=1)
             return x
         else:
             # for i, up_block in enumerate(self.decoder):
@@ -85,6 +88,7 @@ class Res50_Unet_Combine(nn.Module):
                                     .format(str(type(decoder_item)), i))
             out_block = self.decoder[-1]
             x = out_block(x)
+            x = F.softmax(x, dim=1)
             return x
 
 

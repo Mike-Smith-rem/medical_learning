@@ -3,6 +3,7 @@
 
 import torch
 import numpy as np
+import torch.nn.functional as F
 
 
 def binary_dice_score(label_gt, label_pred, threshold: float = 0.5) -> dict:
@@ -14,17 +15,22 @@ def binary_dice_score(label_gt, label_pred, threshold: float = 0.5) -> dict:
     """
     epsilon = 1.0e-6
     B, C = label_pred.shape[0], label_pred.shape[1]
+    # print(label_pred.shape)
     label_gt = label_gt.detach().view(B, -1)
     label_pred = label_pred.detach().view(B, C, -1)
-    label_pred = torch.argmax(label_pred, dim=1)
+    if C != 1:
+        label_pred = torch.argmax(label_pred, dim=1)
+    else:
+        label_pred = label_pred.view(B, -1)
+        label_pred = (label_pred > threshold).int()
 
     # label_pred = (label_pred > threshold).int()
     # print(label_gt)
     # print(label_pred)
-    if label_gt.max() == 0:
-        label_gt = 1 - label_gt
-        label_pred = 1 - label_pred
-    score = 2.0 * torch.sum(label_gt * label_pred) / (torch.sum(label_gt) + torch.sum(label_pred) + epsilon)
+    # if label_gt.max() == 0:
+    #     label_gt = 1 - label_gt
+    #     label_pred = 1 - label_pred
+    score = (2.0 * torch.sum(label_gt * label_pred) + epsilon) / (torch.sum(label_gt) + torch.sum(label_pred) + epsilon)
     return {'dice': score}
 
 
@@ -77,6 +83,20 @@ def acc_scores(label_gt, label_pred) -> dict:
         'mean_acc': acc_total,
         'acc': accuracy
     }
+
+
+def f_score(inputs,target,beta=1,smooth=1e-5):
+    n, c, h, w = inputs.size()
+    nt, ht, wt = target.size()
+    if h != ht and w != wt:
+        inputs = F.interpolate(inputs, size=(ht, wt), mode="bilinear", align_corners=True)
+    # temp_inputs is n*（h*w）*c,每个值是第c类得概率
+    temp_inputs = torch.softmax(inputs.transpose(1, 2).transpose(2, 3).contiguous().view(n, -1, c),-1)
+    temp_inputs = temp_inputs.argmax(dim=-1).flatten()
+    temp_target = target.flatten()
+    intersection = torch.sum(temp_inputs * temp_target)
+    dice_score = (2. * intersection +smooth)/ (torch.sum(temp_inputs) + torch.sum(temp_target)+smooth)
+    return dice_score
 
 
 # 在训练网络前定义函数用于计算Acc 和 mIou
